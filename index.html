@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>神様の惑星工場</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="神様になって、宇宙から惑星をまるごと巨大工場に。お金を稼いで惑星を10段階に進化させる3D放置ゲーム。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=Zen+Kaku+Gothic+New:wght@400;700&display=swap">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<canvas id="scene" aria-label="惑星。タップするとお金がもらえます"></canvas>
+<div id="vignette" aria-hidden="true"></div>
+<div id="floaters" aria-hidden="true"></div>
+<div id="flash" aria-hidden="true"></div>
+
+<header id="hud">
+  <div class="wallet">
+    <div class="money" id="money">¥0</div>
+    <div class="rates">
+      <span id="rate">毎秒 ¥0</span>
+      <span class="tapv" id="tapv">タップ ¥1</span>
+    </div>
+    <div class="buffs" id="buffs"></div>
+  </div>
+  <div class="hud-right">
+    <button id="stageChip" class="stage-chip" type="button" aria-label="惑星の進化を見る">
+      <span class="form" id="stageForm">第1形態</span>
+      <span class="sname" id="stageName">荒野の星</span>
+      <span class="size" id="stageSize">直径 3,400 km</span>
+    </button>
+    <button id="soundBtn" class="icon-btn" type="button" aria-label="音のオン・オフ"></button>
+  </div>
+</header>
+
+<button id="evoCta" class="evo-cta" type="button" hidden>惑星を進化させる</button>
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+<div id="banner" class="banner" hidden>
+  <div class="b-form" id="bForm"></div>
+  <div class="b-name" id="bName"></div>
+  <div class="b-desc" id="bDesc"></div>
+</div>
+
+<aside id="dock">
+  <div id="powers" class="powers"></div>
+  <nav class="tabs" role="tablist">
+    <button class="tab on" type="button" data-tab="fac" role="tab">工場</button>
+    <button class="tab" type="button" data-tab="upg" role="tab">強化<span class="badge" id="upgBadge" hidden></span></button>
+    <button class="tab" type="button" data-tab="evo" role="tab">進化<span class="badge dot" id="evoBadge" hidden></span></button>
+    <button class="tab" type="button" data-tab="god" role="tab">神殿</button>
+    <button class="collapse" id="collapseBtn" type="button" aria-label="パネルを閉じる"></button>
+  </nav>
+  <div class="panes">
+    <section class="pane on" id="pane-fac">
+      <div class="pane-head">
+        <span class="ph-title">工場を建てる</span>
+        <div class="qty" id="qty">
+          <button type="button" data-q="1" class="on">×1</button>
+          <button type="button" data-q="10">×10</button>
+          <button type="button" data-q="100">×100</button>
+          <button type="button" data-q="max">最大</button>
+        </div>
+      </div>
+      <div class="list" id="facList"></div>
+    </section>
+    <section class="pane" id="pane-upg">
+      <div class="pane-head">
+        <span class="ph-title">強化</span>
+        <span class="ph-sub" id="upgCount"></span>
+      </div>
+      <div class="list" id="upgList"></div>
+    </section>
+    <section class="pane" id="pane-evo">
+      <div class="list" id="evoPane"></div>
+    </section>
+    <section class="pane" id="pane-god">
+      <div class="list" id="godPane"></div>
+    </section>
+  </div>
+</aside>
+
+<div id="intro" class="overlay" hidden>
+  <div class="card intro-card">
+    <p class="eyebrow">PLANET FACTORY</p>
+    <h1>神様の<br>惑星工場</h1>
+    <p class="story">あなたは、宇宙をみおろす神様。<br>目の前には、名もない小さな岩の惑星がひとつ。</p>
+    <p class="story">この星をまるごと巨大工場にして、お金を稼ぎ、<br>宇宙でいちばん「めちゃくちゃ」な星へ進化させよう。</p>
+    <ul class="howto">
+      <li><b>タップ</b>　惑星をタップしてお金を集める</li>
+      <li><b>建てる</b>　工場が自動でお金を稼ぐ</li>
+      <li><b>進化</b>　惑星が巨大化して、見た目も収入も激変</li>
+    </ul>
+    <button id="introGo" class="primary" type="button">創造をはじめる</button>
+  </div>
+</div>
+
+<div id="modal" class="overlay" hidden>
+  <div class="card">
+    <h2 id="mTitle"></h2>
+    <p id="mBody"></p>
+    <button id="mOk" class="primary" type="button">OK</button>
+  </div>
+</div>
+
+<div id="fatal" class="overlay" hidden>
+  <div class="card">
+    <h2>3Dを表示できませんでした</h2>
+    <p id="fatalMsg">インターネット接続と、ブラウザのWebGL設定を確認してください。</p>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="js/data.js"></script>
+<script src="js/state.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/shaders.js"></script>
+<script src="js/world.js"></script>
+<script src="js/buildings.js"></script>
+<script src="js/fx.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
