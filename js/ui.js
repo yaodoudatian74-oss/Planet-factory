@@ -173,12 +173,61 @@ function buildGodPane() {
     '<p class="evo-desc">神格1につき、すべての収入とタップが +10%。いまは ×' + divMult().toFixed(1) + '</p></section>' +
     '<section class="card-sec next stack"><div><div class="eyebrow2">ビッグバン　宇宙 #' + S.universe + '</div>' +
     '<div class="evo-title">宇宙を作り直す</div></div>' + bb + '</section>' +
+    '<section class="card-sec stack"><div class="eyebrow2">オンライン</div><div id="onlineSlot"></div></section>' +
     '<section class="card-sec"><div class="eyebrow2">記録</div><dl class="stats" id="statsDl"></dl></section>' +
     '<section class="card-sec stack"><div class="eyebrow2">設定</div>' +
     '<div class="set-row"><span>効果音</span><div class="seg" id="segSound"><button type="button" data-v="on" class="' + (sound ? 'on' : '') + '">オン</button><button type="button" data-v="off" class="' + (sound ? '' : 'on') + '">オフ</button></div></div>' +
     '<div class="set-row"><span>画質</span><div class="seg" id="segQuality"><button type="button" data-v="high" class="' + (low ? '' : 'on') + '">きれい</button><button type="button" data-v="low" class="' + (low ? 'on' : '') + '">軽い</button></div></div>' +
     '<button type="button" class="ghost danger" id="wipeBtn">' + (UI.confirm === 'wipe' ? '本当に消す（元に戻せません）' : 'セーブデータを消して最初から') + '</button></section>';
+  onlineSig = '';
   refreshGodPane();
+  renderOnline();
+}
+
+// ---------- オンライン（神殿の中） ----------
+let onlineSig = '';
+
+function onlineHTML(players) {
+  if (!Online.configured()) {
+    return '<p class="evo-desc">オンライン機能は、Firebaseの設定を入れると使えます（README参照）。</p>';
+  }
+  if (Online.status === 'off') return '<p class="evo-desc">接続しています…</p>';
+  if (Online.status === 'error') return '<p class="evo-desc err">' + esc(Online.error) + '</p>';
+  if (Online.status !== 'in') {
+    return '<label class="field">あなたの名前<input class="txt" id="onName" maxlength="12" value="' + esc(Online.name) + '"></label>' +
+      '<button type="button" class="primary" id="onNew">部屋を作る</button>' +
+      '<div class="join"><input class="txt" id="onCode" maxlength="4" placeholder="4文字のコード" autocomplete="off" autocapitalize="characters">' +
+      '<button type="button" class="ghost" id="onJoin">コードで参加</button></div>' +
+      (Online.error ? '<p class="evo-desc err">' + esc(Online.error) + '</p>' : '');
+  }
+  const rows = players.map((p) => {
+    const self = p.uid === Online.uid;
+    return '<div class="row prow"><div class="meta"><div class="name">' + esc(p.name) + (self ? '<span class="own">（あなた）</span>' : '') + '</div>' +
+      '<div class="sub">' + formLabel(p.stage) + ' ・ 毎秒' + yen(p.inc) + ' ・ 工場' + p.built + '棟</div></div>' +
+      (self ? '' : '<button type="button" class="ghost danger" data-attack="' + esc(p.uid) + '">ミサイル</button>') + '</div>';
+  }).join('');
+  return '<div class="room-code"><span>部屋のコード</span><b>' + esc(Online.code) + '</b></div>' +
+    '<p class="evo-desc">仲間1人ごとに収入 +10%（最大 +50%）。いまは ×' + Online.coopFor(players.length).toFixed(2) + '</p>' +
+    '<div class="plist">' + rows + '</div>' +
+    '<p class="evo-desc">ミサイルが当たると、相手は持ち金の8%（最大は毎秒収入60秒分）を失います。発射は45秒に1回です。</p>' +
+    '<button type="button" class="ghost" id="onLeave">部屋を出る</button>';
+}
+
+function renderOnline() {
+  const slot = $('#onlineSlot');
+  if (!slot) return;
+  const players = Online.status === 'in' ? Online.players() : [];
+  const sig = [Online.status, Online.code, Online.error, Online.name,
+    players.map((p) => p.uid + p.name + p.stage + p.inc + p.built).join(',')].join('|');
+  if (sig !== onlineSig) {
+    onlineSig = sig;
+    slot.innerHTML = onlineHTML(players);
+  }
+  slot.querySelectorAll('[data-attack]').forEach((b) => {
+    const cd = Online.cooldown > 0;
+    b.disabled = cd;
+    b.textContent = cd ? '再使用 ' + Math.ceil(Online.cooldown) + '秒' : 'ミサイル';
+  });
 }
 
 function refreshGodPane() {
@@ -257,7 +306,7 @@ function setTab(tab) {
 function refreshPanels() {
   if (UI.tab === 'fac') refreshFacList();
   if (UI.tab === 'evo') { if (UI.stageShown !== S.stage) buildEvoPane(); else refreshEvoPane(); }
-  if (UI.tab === 'god') refreshGodPane();
+  if (UI.tab === 'god') { refreshGodPane(); renderOnline(); }
   refreshUpgList();
   refreshEvoPane();
   refreshPowers();
