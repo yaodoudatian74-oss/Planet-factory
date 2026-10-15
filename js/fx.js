@@ -236,30 +236,18 @@ function removeMeteor(m) {
   m.dead = true;
   fxWorld.remove(m.mesh);
   m.mesh.material.dispose();
-  if (m.mesh.children[0]) m.mesh.children[0].material.dispose();
+  m.mesh.children[0].material.dispose();
 }
 
 // 画面座標(x,y)の近くの隕石を探す
 function meteorAt(x, y) {
   for (const m of meteors) {
-    if (m.dead || m.hit) continue;
+    if (m.dead) continue;
     const s = worldToScreen(m.mesh.position);
     if (!s) continue;
     if (Math.hypot(s.x - x, s.y - y) < 56) return m;
   }
   return null;
-}
-
-// 他のプレイヤーからのミサイル（赤い弾が星めがけて飛んでくる。タップではつかまえられない）
-function incomingMissile() {
-  const R = W.R;
-  const dir = randUnit(new T.Vector3());
-  const p0 = dir.clone().multiplyScalar(R * 4.2);
-  const p1 = dir.clone().multiplyScalar(R * 1.02);
-  const mesh = new T.Mesh(meteorGeo, new T.MeshBasicMaterial({ color: '#ff4d6d' }));
-  mesh.scale.setScalar(0.06 * R);
-  fxWorld.add(mesh);
-  meteors.push({ mesh, p0, p1, t: 0, dur: 1.4, dead: false, hit: true });
 }
 
 // ---------- ロケット ----------
@@ -349,14 +337,7 @@ function updateFx(dt, ts) {
         life: 0.9, s0: 0.1 * R, s1: 0, color: j ? C_GOLD : C_ORANGE, a: 0.8,
       });
     }
-    if (k >= 1) {
-      if (m.hit) {
-        shockwave(m.p1, null, 0.6 * R, '#ff4d6d', 0.8);
-        burst(m.p1, 80, { speed: 1.1 * R, size: 0.07 * R, life: 0.9, colors: [new T.Color('#ff4d6d'), C_WHITE] });
-      }
-      removeMeteor(m);
-      meteors.splice(i, 1);
-    }
+    if (k >= 1) { removeMeteor(m); meteors.splice(i, 1); }
   }
   for (let i = rockets.length - 1; i >= 0; i--) {
     const r = rockets[i];

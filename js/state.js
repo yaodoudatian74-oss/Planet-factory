@@ -81,11 +81,8 @@ function factoryMult(id) {
   return m;
 }
 
-let coopMult = 1;                 // オンラインで仲間がいるときの収入ボーナス（保存しない）
-const setCoop = (m) => { coopMult = m; };
-
 function globalMult() {
-  let m = stageMult(S.stage) * divMult() * coopMult;
+  let m = stageMult(S.stage) * divMult();
   for (const g of GLOBAL_UPGS) if (S.upg[g.id]) m *= g.mult;
   return m;
 }

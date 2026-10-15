@@ -301,36 +301,6 @@ function updateBigBang(dt) {
   }
 }
 
-// ---------- オンライン（ミサイル・部屋） ----------
-function onlineClick(e) {
-  const atk = e.target.closest('[data-attack]');
-  if (atk) {
-    Sound.unlock();
-    if (Online.attack(atk.dataset.attack)) { Sound.whoosh(); toast('ミサイルを発射した！'); } else Sound.deny();
-    renderOnline();
-    return true;
-  }
-  if (e.target.closest('#onNew')) { Sound.unlock(); Online.createRoom(); return true; }
-  if (e.target.closest('#onJoin')) { Sound.unlock(); Online.joinRoom($('#onCode').value); return true; }
-  if (e.target.closest('#onLeave')) { Online.leave(); return true; }
-  return false;
-}
-
-// 他のプレイヤーからミサイルが来た。弾が当たってからお金が減る
-function onMissileHit(m) {
-  incomingMissile();
-  Sound.meteor();
-  vibrate(60);
-  FX.shake = Math.max(FX.shake, 0.6);
-  setTimeout(() => {
-    const loss = Online.missileLoss(S.money, baseIncome());
-    S.money = Math.max(0, S.money - loss);
-    refreshMoney();
-    toast((m.fromName || '誰か') + 'からミサイル攻撃！ お金 -' + yen(loss));
-    writeSave();
-  }, 1400);
-}
-
 function doWipe() {
   if (UI.confirm !== 'wipe') {
     UI.confirm = 'wipe';
@@ -339,7 +309,6 @@ function doWipe() {
     return;
   }
   UI.confirm = null;
-  Online.leave();
   wipeSave();
   const settings = S.settings;
   S = freshState();
@@ -437,11 +406,9 @@ function bindUi() {
     if (row) buyUpgrade(row.dataset.upg, row);
   });
   $('#evoPane').addEventListener('click', (e) => { if (e.target.closest('#evoBtn')) doEvolve(); });
-  $('#godPane').addEventListener('change', (e) => { if (e.target.id === 'onName') Online.setName(e.target.value); });
   $('#godPane').addEventListener('click', (e) => {
     if (e.target.closest('#bbBtn')) { doBigBang(); return; }
     if (e.target.closest('#wipeBtn')) { doWipe(); return; }
-    if (onlineClick(e)) return;
     const seg = e.target.closest('.seg button');
     if (!seg) return;
     if (seg.parentElement.id === 'segSound') { S.settings.sound = seg.dataset.v === 'on'; refreshSoundBtn(); Sound.unlock(); }
@@ -499,7 +466,6 @@ function loop(now) {
   S.play += dt;
   tickBuffs(dt);
   gameTimers(dt, ts);
-  Online.tick(dt);
   updateBigBang(dt);
 
   updateView(dt);
@@ -546,10 +512,6 @@ function start(data) {
   initInput(canvasEl);
   buildPowers();
   bindUi();
-  Online.init({
-    onChange: () => { if (UI.tab === 'god') renderOnline(); },
-    onIncoming: onMissileHit,
-  });
   setTab('fac');
   refreshSoundBtn();
   refreshPanels();
