@@ -625,6 +625,45 @@ body.dock-collapsed .toast { bottom: calc(var(--tabs-h) + var(--safe-b) + 100px)
   .powers { gap: 9px; }
 }
 
+/* オンライン */
+#onlineSlot { display: grid; gap: 10px; }
+.txt {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line-2);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.txt:focus { outline: 2px solid var(--gold); outline-offset: 1px; }
+.field { display: grid; gap: 6px; font-size: 13px; color: var(--muted); font-weight: 700; }
+.join { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.join .ghost { width: auto; white-space: nowrap; }
+.room-code {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(121, 220, 255, 0.08);
+  border: 1px solid rgba(121, 220, 255, 0.35);
+}
+.room-code span { color: var(--muted); font-size: 13px; font-weight: 700; }
+.room-code b { font-family: var(--f-display); font-size: 24px; letter-spacing: 0.15em; color: var(--steel); font-weight: 400; }
+.plist { display: grid; gap: 6px; }
+.prow { grid-template-columns: minmax(0, 1fr) auto; cursor: default; }
+.prow .sub { margin-top: 2px; }
+.prow .ghost { width: auto; padding: 8px 12px; font-size: 13px; white-space: nowrap; }
+.prow .ghost:disabled { opacity: 0.45; }
+.err { color: var(--bad) !important; font-weight: 700; }
+
 /* 画面が低いとき（アプリ内ブラウザなど）はイントロを詰める */
 @media (max-height: 760px) {
   .intro-card { padding: 18px 20px 16px; }
