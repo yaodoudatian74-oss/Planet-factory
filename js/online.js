@@ -1,7 +1,81 @@
 'use strict';
-/* オンライン: Claudeのアーティファクトの機能（room と db）で部屋を作り、協力とミサイル攻撃をする。
-   Claudeのアーティファクトの外（ダウンロードしたHTMLなど）では、この機能はオフのまま。
+/* オンライン: 部屋を作って、協力とミサイル攻撃をする。
+   接続先は2つ。Claudeのアーティファクトの中では room / db、
+   普通のブラウザでは Firebase（js/online-config.js の設定があるとき）を使う。どちらもなければオフ。
    注意: 攻撃の結果は受け取ったほうのブラウザで計算するため、改造すれば不正はできてしまう。 */
+
+// ---------- 接続先（Claude版） ----------
+function claudeBackend(room, db, user) {
+  let me = null, named = null;
+  const missilesPath = (c) => 'rooms/' + c + '/missiles';
+  return {
+    async init() { me = await user.id(); return me; },
+    async exists(c) { return (await db.doc('rooms/' + c).get()).exists; },
+    async create(c) { await db.doc('rooms/' + c).set({ host: me, created: Date.now() }); },
+    async join(c, cb) {
+      named = await room.join('pf-' + c.toLowerCase());
+      const stopPeers = named.onPeers(({ peers }) => cb.onPlayers(peers
+        .filter((p) => p.kind === 'viewer' && p.by && p.presence)
+        .map((p) => ({ uid: p.by, name: p.presence.name, stage: p.presence.stage, built: p.presence.built, inc: p.presence.inc }))),
+        cb.onError);
+      const stopMissiles = db.collection(missilesPath(c)).where('to', '==', me).onSnapshot((snap) => {
+        for (const ch of snap.docChanges()) if (ch.type === 'added') cb.onMissile(ch.doc.data(), ch.doc.id);
+      }, cb.onError);
+      const leaving = named;
+      return () => {
+        stopPeers();
+        stopMissiles();
+        leaving.leave().catch(() => {});
+        named = null;
+      };
+    },
+    async publish(c, info) { if (named) await named.presence(info); },
+    async send(c, to, payload) { await db.collection(missilesPath(c)).add({ ...payload, to }); },
+    async removeMissile(c, id) { await db.doc(missilesPath(c) + '/' + id).delete(); },
+  };
+}
+
+// ---------- 接続先（Firebase版） ----------
+function firebaseBackend() {
+  const database = firebase.database();
+  let me = null, unsubs = [];
+  return {
+    async init() {
+      if (!firebase.apps.length) firebase.initializeApp(window.PF_FIREBASE_CONFIG);
+      const c = await firebase.auth().signInAnonymously();
+      me = c.user.uid;
+      return me;
+    },
+    async exists(c) { return (await database.ref('rooms/' + c).once('value')).exists(); },
+    async create(c) { await database.ref('rooms/' + c).set({ host: me, created: Date.now() }); },
+    async join(c, cb) {
+      const playersRef = database.ref('rooms/' + c + '/players');
+      const missilesRef = database.ref('rooms/' + c + '/missiles');
+      const myRef = database.ref('rooms/' + c + '/players/' + me);
+      myRef.onDisconnect().remove();
+      const onPlayers = (snap) => {
+        const v = snap.val() || {};
+        cb.onPlayers(Object.entries(v).filter(([, p]) => p).map(([id, p]) => ({ uid: id, ...p })));
+      };
+      const onMissile = (snap) => {
+        const m = snap.val();
+        if (m && m.to === me) cb.onMissile(m, snap.key);
+      };
+      playersRef.on('value', onPlayers, cb.onError);
+      missilesRef.on('child_added', onMissile, cb.onError);
+      unsubs = [() => playersRef.off('value', onPlayers), () => missilesRef.off('child_added', onMissile)];
+      return () => {
+        unsubs.forEach((f) => f());
+        unsubs = [];
+        myRef.onDisconnect().cancel();
+        myRef.remove().catch(() => {});
+      };
+    },
+    async publish(c, info) { await database.ref('rooms/' + c + '/players/' + me).set(info); },
+    async send(c, to, payload) { await database.ref('rooms/' + c + '/missiles').push({ ...payload, to }); },
+    async removeMissile(c, id) { await database.ref('rooms/' + c + '/missiles/' + id).remove(); },
+  };
+}
 
 const Online = (() => {
   const NAME_KEY = 'planet-factory-name';
@@ -15,8 +89,7 @@ const Online = (() => {
   const COOP_PER_PLAYER = 0.1;    // 仲間1人ごとの収入ボーナス
   const COOP_MAX = 1.5;           // 協力ボーナスの上限
 
-  let claudeRoom = null, claudeDb = null, claudeUser = null;
-  let uid = null, code = null, named = null, missilesUnsub = null, peersUnsub = null;
+  let backend = null, uid = null, code = null, leaveFn = null, inRoom = false;
   let status = 'off';             // off: この表示では使えない / connecting / ready / in / error
   let error = '';
   let cooldown = 0, sendT = 0;
@@ -24,7 +97,6 @@ const Online = (() => {
   let name = null;
   let handlers = { onChange() {}, onIncoming() {} };
   const changed = () => handlers.onChange();
-  const missilesPath = (c) => 'rooms/' + c + '/missiles';
 
   function myName() {
     if (!name) {
@@ -42,22 +114,33 @@ const Online = (() => {
     if (!v) return;
     name = v;
     try { localStorage.setItem(NAME_KEY, v); } catch (e) { /* noop */ }
-    if (named) publish();
+    if (inRoom) publish();
     changed();
+  }
+
+  // Claudeの中ならClaude版、そうでなく設定があればFirebase版
+  async function pickBackend() {
+    if (window.claude && typeof window.claude.use === 'function') {
+      const [room, db, user] = await Promise.all(['room', 'db', 'user'].map((n) => window.claude.use(n)));
+      if (room && db && user) return claudeBackend(room, db, user);
+    }
+    const cfg = window.PF_FIREBASE_CONFIG;
+    if (cfg && cfg.databaseURL && window.firebase && firebase.database && firebase.auth) return firebaseBackend();
+    return null;
   }
 
   async function init(h) {
     handlers = { ...handlers, ...h };
-    if (!window.claude || typeof window.claude.use !== 'function') { status = 'off'; return; }
+    backend = await pickBackend().catch(() => null);
+    if (!backend) { status = 'off'; changed(); return; }
     status = 'connecting';
     changed();
     try {
-      [claudeRoom, claudeDb, claudeUser] = await Promise.all(['room', 'db', 'user'].map((n) => window.claude.use(n)));
-      uid = claudeUser ? await claudeUser.id() : null;
-      status = claudeRoom && claudeDb && uid ? 'ready' : 'off';
+      uid = await backend.init();
+      status = uid ? 'ready' : 'off';
     } catch (e) {
       status = 'error';
-      error = '接続できませんでした。ページを開き直してください。';
+      error = '接続できませんでした。設定（js/online-config.js）かネットを確認してください。';
     }
     changed();
   }
@@ -75,10 +158,8 @@ const Online = (() => {
     try {
       for (let i = 0; i < 8; i++) {
         const c = randomCode();
-        const doc = claudeDb.doc('rooms/' + c);
-        const snap = await doc.get();
-        if (!snap.exists) {
-          await doc.set({ host: uid, created: Date.now() });
+        if (!(await backend.exists(c))) {
+          await backend.create(c);
           return enter(c);
         }
       }
@@ -93,16 +174,15 @@ const Online = (() => {
     const c = String(input || '').trim().toUpperCase();
     if (!CODE_RE.test(c)) return failed('コードは4文字です。');
     try {
-      const snap = await claudeDb.doc('rooms/' + c).get();
-      if (!snap.exists) return failed('部屋が見つかりません。コードを確かめてください。');
-      enter(c);
+      if (!(await backend.exists(c))) return failed('部屋が見つかりません。コードを確かめてください。');
+      await enter(c);
     } catch (e) {
       failed('部屋に入れませんでした。もう一度試してください。');
     }
   }
 
   // 部屋の中で起きたエラー（接続が切れた・権限がない など）は、部屋を出た状態にして知らせる
-  function onRoomError(e) {
+  function onRoomError() {
     leaveRoom(false);
     failed('部屋との接続が切れました。もう一度入り直してください。');
   }
@@ -110,37 +190,30 @@ const Online = (() => {
   async function enter(c) {
     leaveRoom(false);
     error = '';
-    code = c;
-    status = 'in';
-    changed();
-    let room;
     try {
-      room = await claudeRoom.join('pf-' + c.toLowerCase());
+      leaveFn = await backend.join(c, {
+        onPlayers(list) { peerList = list; changed(); },
+        onMissile(m, id) {
+          backend.removeMissile(c, id).catch(() => {});   // 受け取ったら消す
+          if (m.to === uid && Date.now() - m.ts < MISSILE_TTL) handlers.onIncoming(m);
+        },
+        onError: onRoomError,
+      });
     } catch (e) {
-      code = null;
-      status = 'ready';
       return failed('部屋に入れませんでした。もう一度試してください。');
     }
-    named = room;
+    code = c;
+    inRoom = true;
+    status = 'in';
     publish();
     sendT = SEND_EVERY;
-    peersUnsub = room.onPeers(({ peers }) => { peerList = peers; changed(); }, onRoomError);
-    missilesUnsub = claudeDb.collection(missilesPath(c)).where('to', '==', uid).onSnapshot((snap) => {
-      for (const ch of snap.docChanges()) {
-        if (ch.type !== 'added') continue;
-        const m = ch.doc.data();
-        claudeDb.doc(missilesPath(c) + '/' + ch.doc.id).delete().catch(() => {});   // 受け取ったら消す
-        if (m && m.to === uid && Date.now() - m.ts < MISSILE_TTL) handlers.onIncoming(m);
-      }
-    }, onRoomError);
+    changed();
   }
 
   function leaveRoom(notify = true) {
-    if (missilesUnsub) missilesUnsub();
-    if (peersUnsub) peersUnsub();
-    missilesUnsub = peersUnsub = null;
-    if (named) named.leave().catch(() => {});
-    named = null;
+    if (leaveFn) leaveFn();
+    leaveFn = null;
+    inRoom = false;
     code = null;
     peerList = [];
     if (status === 'in') status = 'ready';
@@ -149,32 +222,31 @@ const Online = (() => {
   }
 
   function publish() {
-    if (!named) return;
-    named.presence({ name: myName(), stage: S.stage, built: totalBuilt(), inc: Math.round(baseIncome()) }).catch(() => {});
+    if (!inRoom) return;
+    backend.publish(code, { name: myName(), stage: S.stage, built: totalBuilt(), inc: Math.round(baseIncome()), t: Date.now() })
+      .catch(() => {});
   }
 
   const coopFor = (n) => Math.min(COOP_MAX, 1 + COOP_PER_PLAYER * Math.max(0, n - 1));
 
   function activePlayers() {
     return peerList
-      .filter((p) => p.kind === 'viewer' && p.by && p.presence && p.presence.name)
-      .map((p) => ({ uid: p.by, name: p.presence.name, stage: p.presence.stage, built: p.presence.built, inc: p.presence.inc }))
+      .filter((p) => p.uid && p.name)
       .sort((a, b) => (a.uid === uid ? -1 : b.uid === uid ? 1 : 0));
   }
 
   // 毎フレーム呼ぶ。自分の状況の送信・協力ボーナス・攻撃の再使用時間
   function tick(dt) {
     if (cooldown > 0) cooldown = Math.max(0, cooldown - dt);
-    if (status !== 'in' || !named) return;
+    if (!inRoom) return;
     sendT -= dt;
     if (sendT <= 0) { sendT = SEND_EVERY; publish(); }
     setCoop(coopFor(activePlayers().length));
   }
 
   function attack(target) {
-    if (status !== 'in' || !named || cooldown > 0 || !target || target === uid) return false;
-    claudeDb.collection(missilesPath(code))
-      .add({ from: uid, fromName: myName(), to: target, ts: Date.now() })
+    if (status !== 'in' || !inRoom || cooldown > 0 || !target || target === uid) return false;
+    backend.send(code, target, { from: uid, fromName: myName(), ts: Date.now() })
       .catch(() => failed('ミサイルを撃てませんでした。共同編集できる権限が必要です。'));
     cooldown = MISSILE_COOLDOWN;
     return true;

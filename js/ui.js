@@ -189,7 +189,7 @@ let onlineSig = '';
 
 function onlineHTML(players) {
   if (Online.status === 'off') {
-    return '<p class="evo-desc">オンラインは、Claudeのアーティファクトのリンクから開くと使えます。ダウンロードしたHTMLでは使えません。</p>';
+    return '<p class="evo-desc">オンラインは、Claudeのアーティファクトのリンクから開くか、Firebaseの設定を入れた版で使えます（README参照）。</p>';
   }
   if (Online.status === 'connecting') return '<p class="evo-desc">接続しています…</p>';
   if (Online.status === 'error') return '<p class="evo-desc err">' + esc(Online.error) + '</p>';
