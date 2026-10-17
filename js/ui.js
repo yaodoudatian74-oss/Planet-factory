@@ -188,10 +188,10 @@ function buildGodPane() {
 let onlineSig = '';
 
 function onlineHTML(players) {
-  if (!Online.configured()) {
-    return '<p class="evo-desc">オンライン機能は、Firebaseの設定を入れると使えます（README参照）。</p>';
+  if (Online.status === 'off') {
+    return '<p class="evo-desc">オンラインは、Claudeのアーティファクトのリンクから開くと使えます。ダウンロードしたHTMLでは使えません。</p>';
   }
-  if (Online.status === 'off') return '<p class="evo-desc">接続しています…</p>';
+  if (Online.status === 'connecting') return '<p class="evo-desc">接続しています…</p>';
   if (Online.status === 'error') return '<p class="evo-desc err">' + esc(Online.error) + '</p>';
   if (Online.status !== 'in') {
     return '<label class="field">あなたの名前<input class="txt" id="onName" maxlength="12" value="' + esc(Online.name) + '"></label>' +
@@ -210,6 +210,7 @@ function onlineHTML(players) {
     '<p class="evo-desc">仲間1人ごとに収入 +10%（最大 +50%）。いまは ×' + Online.coopFor(players.length).toFixed(2) + '</p>' +
     '<div class="plist">' + rows + '</div>' +
     '<p class="evo-desc">ミサイルが当たると、相手は持ち金の8%（最大は毎秒収入60秒分）を失います。発射は45秒に1回です。</p>' +
+    (Online.error ? '<p class="evo-desc err">' + esc(Online.error) + '</p>' : '') +
     '<button type="button" class="ghost" id="onLeave">部屋を出る</button>';
 }
 
