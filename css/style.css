@@ -657,6 +657,7 @@ body.dock-collapsed .toast { bottom: calc(var(--tabs-h) + var(--safe-b) + 100px)
   border: 1px solid rgba(121, 220, 255, 0.35);
 }
 .room-code span { color: var(--muted); font-size: 13px; font-weight: 700; }
+.room-code b.pub { font-size: 18px; letter-spacing: 0.04em; }
 .room-code b { font-family: var(--f-display); font-size: 24px; letter-spacing: 0.15em; color: var(--steel); font-weight: 400; }
 .plist { display: grid; gap: 6px; }
 .prow { grid-template-columns: minmax(0, 1fr) auto; cursor: default; }

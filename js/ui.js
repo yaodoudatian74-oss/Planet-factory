@@ -195,7 +195,8 @@ function onlineHTML(players) {
   if (Online.status === 'error') return '<p class="evo-desc err">' + esc(Online.error) + '</p>';
   if (Online.status !== 'in') {
     return '<label class="field">あなたの名前<input class="txt" id="onName" maxlength="12" value="' + esc(Online.name) + '"></label>' +
-      '<button type="button" class="primary" id="onNew">部屋を作る</button>' +
+      '<button type="button" class="primary" id="onPublic">公開ロビーに入る（みんなと遊ぶ）</button>' +
+      '<button type="button" class="ghost" id="onNew">友だち用の部屋を作る</button>' +
       '<div class="join"><input class="txt" id="onCode" maxlength="4" placeholder="4文字のコード" autocomplete="off" autocapitalize="characters">' +
       '<button type="button" class="ghost" id="onJoin">コードで参加</button></div>' +
       (Online.error ? '<p class="evo-desc err">' + esc(Online.error) + '</p>' : '');
@@ -207,13 +208,16 @@ function onlineHTML(players) {
       (self ? '' : '<div class="acts"><button type="button" class="ghost danger" data-attack="' + esc(p.uid) + '" data-kind="missile">ミサイル</button>' +
         '<button type="button" class="ghost" data-attack="' + esc(p.uid) + '" data-kind="jam">ジャミング</button></div>') + '</div>';
   }).join('');
-  return '<div class="room-code"><span>部屋のコード</span><b>' + esc(Online.code) + '</b></div>' +
+  const head = Online.isPublic
+    ? '<div class="room-code"><span>つながっている場所</span><b class="pub">公開ロビー</b></div>'
+    : '<div class="room-code"><span>部屋のコード</span><b>' + esc(Online.code) + '</b></div>';
+  return head +
     '<p class="evo-desc">仲間1人ごとに収入 +10%（最大 +50%）。いまは ×' + Online.coopFor(players.length).toFixed(2) + '</p>' +
     '<div class="plist">' + rows + '</div>' +
     '<p class="evo-desc">ミサイル: 当たると相手は持ち金の8%（最大は毎秒収入60秒分）を失います。45秒に1回。<br>' +
     'ジャミング: 当たると相手は' + Online.JAM_SECONDS + '秒間、収入が半分になります。60秒に1回。</p>' +
     (Online.error ? '<p class="evo-desc err">' + esc(Online.error) + '</p>' : '') +
-    '<button type="button" class="ghost" id="onLeave">部屋を出る</button>';
+    '<button type="button" class="ghost" id="onLeave">' + (Online.isPublic ? '公開ロビーを出る' : '部屋を出る') + '</button>';
 }
 
 function renderOnline() {

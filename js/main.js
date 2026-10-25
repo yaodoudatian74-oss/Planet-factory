@@ -314,6 +314,7 @@ function onlineClick(e) {
     renderOnline();
     return true;
   }
+  if (e.target.closest('#onPublic')) { Sound.unlock(); Online.enablePublic(); return true; }
   if (e.target.closest('#onNew')) { Sound.unlock(); Online.createRoom(); return true; }
   if (e.target.closest('#onJoin')) { Sound.unlock(); Online.joinRoom($('#onCode').value); return true; }
   if (e.target.closest('#onLeave')) { Online.leave(); return true; }

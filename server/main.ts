@@ -17,7 +17,8 @@ type Player = {
   inc: number;
   cool: Record<string, number>;
 };
-type Room = { players: Map<string, Player> };
+// isPublic: 開いたら自動で入る「公開ロビー」。部屋コードを知らない人も入れる
+type Room = { players: Map<string, Player>; isPublic: boolean };
 
 const rooms = new Map<string, Room>();
 
@@ -32,6 +33,25 @@ function publicPlayers(room: Room) {
 function broadcastPlayers(room: Room) {
   const list = publicPlayers(room);
   for (const p of room.players.values()) send(p.ws, { type: "players", players: list });
+}
+
+function randomCode() {
+  const chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  for (let tries = 0; tries < 50; tries++) {
+    let c = "";
+    for (let i = 0; i < 4; i++) c += chars[Math.floor(Math.random() * chars.length)];
+    if (!rooms.has(c)) return c;
+  }
+  return null;
+}
+
+// 空きのある公開ロビーを探し、なければ新しく作る
+function findPublicRoom() {
+  for (const [code, room] of rooms) if (room.isPublic && room.players.size < MAX_PLAYERS) return code;
+  const code = randomCode();
+  if (!code) return null;
+  rooms.set(code, { players: new Map(), isPublic: true });
+  return code;
 }
 
 function cleanText(v: unknown, max: number) {
@@ -71,7 +91,7 @@ function handleSocket(ws: WebSocket) {
     player = { id, ws, name: name || "神様", stage: 0, built: 0, inc: 0, cool: {} };
     room.players.set(id, player);
     roomCode = code;
-    send(ws, { type: "joined", code, id, players: publicPlayers(room) });
+    send(ws, { type: "joined", code, id, isPublic: room.isPublic, players: publicPlayers(room) });
     broadcastPlayers(room);
   }
 
@@ -91,9 +111,15 @@ function handleSocket(ws: WebSocket) {
       case "create":
         if (!CODE_RE.test(code)) return send(ws, { type: "error", message: "コードは4文字です。" });
         if (rooms.has(code)) return send(ws, { type: "error", message: "そのコードは使われています。" });
-        rooms.set(code, { players: new Map() });
+        rooms.set(code, { players: new Map(), isPublic: false });
         send(ws, { type: "created", code });
         break;
+      case "auto": {
+        const found = findPublicRoom();
+        if (!found) return send(ws, { type: "error", message: "いま公開ロビーを作れません。" });
+        join(found, cleanText(m.name, 12));
+        break;
+      }
       case "join":
         if (!CODE_RE.test(code)) return send(ws, { type: "error", message: "コードは4文字です。" });
         join(code, cleanText(m.name, 12));

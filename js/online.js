@@ -120,24 +120,36 @@ function serverBackend(url) {
     });
   }
 
+  async function enterRoom(msg, cb) {
+    roomCb = cb;
+    let r;
+    try {
+      r = await request(msg, ['joined']);
+    } catch (e) {
+      roomCb = null;
+      throw e;
+    }
+    cb.onPlayers(toList(r.players));
+    return {
+      code: r.code,
+      leave: () => {
+        roomCb = null;
+        if (ready()) ws.send(JSON.stringify({ type: 'leave' }));
+      },
+    };
+  }
+
   return {
     hint: 'サーバー（' + url + '）につながりません。Deno Deploy のエントリーポイントが server/main.ts になっているか確かめてください。',
     async init() { await open(); return me; },
     async exists(c) { return (await request({ type: 'check', code: c }, ['checked'])).exists; },
     async create(c) { await request({ type: 'create', code: c }, ['created']); },
     async join(c, cb) {
-      roomCb = cb;
-      try {
-        const r = await request({ type: 'join', code: c, name: cb.name }, ['joined']);
-        cb.onPlayers(toList(r.players));
-      } catch (e) {
-        roomCb = null;
-        throw e;
-      }
-      return () => {
-        roomCb = null;
-        if (ready()) ws.send(JSON.stringify({ type: 'leave' }));
-      };
+      return (await enterRoom({ type: 'join', code: c, name: cb.name }, cb)).leave;
+    },
+    // 空いている公開ロビーに、サーバーが自動で振り分ける。入った部屋のコードも返す
+    async auto(cb) {
+      return enterRoom({ type: 'auto', name: cb.name }, cb);
     },
     async publish(c, info) {
       if (ready()) ws.send(JSON.stringify({ type: 'status', name: info.name, stage: info.stage, built: info.built, inc: info.inc }));
@@ -163,7 +175,11 @@ const Online = (() => {
   const COOP_PER_PLAYER = 0.1;    // 仲間1人ごとの収入ボーナス
   const COOP_MAX = 1.5;           // 協力ボーナスの上限
 
+  const PUBLIC_CODE = 'PUBS';     // サーバー以外の接続先で、みんなが入る公開ロビーのコード
   let backend = null, uid = null, code = null, leaveFn = null, inRoom = false;
+  let isPublic = false;           // いま公開ロビーにいるか
+  let autoOn = true;              // 開いたら自動で公開ロビーに入る（自分で部屋を出たら、次に開くまで止める）
+  let retry = 0;
   let status = 'off';             // off: この表示では使えない / connecting / ready / in / error
   let error = '';
   const cooldowns = { missile: 0, jam: 0 };
@@ -196,7 +212,9 @@ const Online = (() => {
   // サーバーの場所: 設定（PF_SERVER_URL）があればそれ。.deno.dev / .deno.net で配信しているときは同じ場所の /ws
   function serverUrl() {
     if (window.PF_SERVER_URL) return window.PF_SERVER_URL;
-    if (/\.deno\.(dev|net)$/.test(location.hostname)) return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
+    if (typeof location !== 'undefined' && /\.deno\.(dev|net)$/.test(location.hostname)) {
+      return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
+    }
     return null;
   }
 
@@ -227,6 +245,7 @@ const Online = (() => {
       error = backend.hint || '接続できませんでした。設定（js/online-config.js）かネットを確認してください。';
     }
     changed();
+    if (status === 'ready' && autoOn) joinPublic();
   }
 
   function randomCode() {
@@ -253,6 +272,39 @@ const Online = (() => {
     }
   }
 
+  // 開いたら自動で入る公開ロビー。サーバー版は空いている部屋へ振り分け、ほかは共通の1部屋に入る
+  async function joinPublic() {
+    if (status !== 'ready') return;
+    try {
+      if (backend.auto) {
+        await enter(null, true);
+      } else {
+        if (!(await backend.exists(PUBLIC_CODE))) await backend.create(PUBLIC_CODE);
+        await enter(PUBLIC_CODE, true);
+      }
+    } catch (e) {
+      failed('公開ロビーに入れませんでした。');
+    }
+  }
+
+  // 通信が切れたら、数秒おきに最大5回、つなぎ直して公開ロビーに戻る
+  function scheduleReconnect() {
+    if (!autoOn || retry >= 5) return;
+    retry++;
+    setTimeout(async () => {
+      if (!autoOn || inRoom) return;
+      try {
+        uid = await backend.init();
+        status = uid ? 'ready' : 'off';
+        changed();
+        if (status === 'ready') await joinPublic();
+        if (inRoom) retry = 0; else scheduleReconnect();
+      } catch (e) {
+        scheduleReconnect();
+      }
+    }, 3000);
+  }
+
   async function joinRoom(input) {
     if (status !== 'ready') return;
     const c = String(input || '').trim().toUpperCase();
@@ -267,15 +319,20 @@ const Online = (() => {
 
   // 部屋の中で起きたエラー（接続が切れた・権限がない など）は、部屋を出た状態にして知らせる
   function onRoomError() {
+    const wasPublic = isPublic;
     leaveRoom(false);
-    failed('部屋との接続が切れました。もう一度入り直してください。');
+    if (wasPublic && autoOn) {
+      failed('接続が切れました。つなぎ直しています…');
+      scheduleReconnect();
+    } else {
+      failed('部屋との接続が切れました。もう一度入り直してください。');
+    }
   }
 
-  async function enter(c) {
+  async function enter(c, auto = false) {
     leaveRoom(false);
     error = '';
-    try {
-      leaveFn = await backend.join(c, {
+    const cb = {
         name: myName(),
         onPlayers(list) { peerList = list; changed(); },
         onMissile(m, id) {
@@ -284,13 +341,23 @@ const Online = (() => {
         },
         onNotice(msg) { failed(msg); },   // 部屋は保ったまま知らせる（再使用中など）
         onError: onRoomError,
-      });
+    };
+    try {
+      if (auto && backend.auto) {
+        const r = await backend.auto(cb);   // 入った部屋のコードは、サーバーが決める
+        c = r.code;
+        leaveFn = r.leave;
+      } else {
+        leaveFn = await backend.join(c, cb);
+      }
     } catch (e) {
-      return failed('部屋に入れませんでした。もう一度試してください。');
+      return failed(auto ? '公開ロビーに入れませんでした。' : '部屋に入れませんでした。もう一度試してください。');
     }
     code = c;
+    isPublic = auto;
     inRoom = true;
     status = 'in';
+    retry = 0;
     publish();
     sendT = SEND_EVERY;
     changed();
@@ -300,6 +367,7 @@ const Online = (() => {
     if (leaveFn) leaveFn();
     leaveFn = null;
     inRoom = false;
+    isPublic = false;
     code = null;
     peerList = [];
     if (status === 'in') status = 'ready';
@@ -345,9 +413,12 @@ const Online = (() => {
   }
 
   return {
-    init, createRoom, joinRoom, setName, tick, attack, missileLoss, coopFor,
+    init, createRoom, joinRoom, joinPublic, setName, tick, attack, missileLoss, coopFor,
     JAM_SECONDS, JAM_MULT,
-    leave: () => leaveRoom(true),
+    // 自分で部屋を出たときは、自動で戻らない（「公開ロビーに入る」を押すと、また自動で入る）
+    leave: () => { autoOn = false; leaveRoom(true); },
+    enablePublic: () => { autoOn = true; retry = 0; return joinPublic(); },
+    get isPublic() { return isPublic; },
     players: activePlayers,
     cooldownOf: (kind) => cooldowns[kind] || 0,
     get status() { return status; },
