@@ -204,12 +204,14 @@ function onlineHTML(players) {
     const self = p.uid === Online.uid;
     return '<div class="row prow"><div class="meta"><div class="name">' + esc(p.name) + (self ? '<span class="own">（あなた）</span>' : '') + '</div>' +
       '<div class="sub">' + formLabel(p.stage) + ' ・ 毎秒' + yen(p.inc) + ' ・ 工場' + p.built + '棟</div></div>' +
-      (self ? '' : '<button type="button" class="ghost danger" data-attack="' + esc(p.uid) + '">ミサイル</button>') + '</div>';
+      (self ? '' : '<div class="acts"><button type="button" class="ghost danger" data-attack="' + esc(p.uid) + '" data-kind="missile">ミサイル</button>' +
+        '<button type="button" class="ghost" data-attack="' + esc(p.uid) + '" data-kind="jam">ジャミング</button></div>') + '</div>';
   }).join('');
   return '<div class="room-code"><span>部屋のコード</span><b>' + esc(Online.code) + '</b></div>' +
     '<p class="evo-desc">仲間1人ごとに収入 +10%（最大 +50%）。いまは ×' + Online.coopFor(players.length).toFixed(2) + '</p>' +
     '<div class="plist">' + rows + '</div>' +
-    '<p class="evo-desc">ミサイルが当たると、相手は持ち金の8%（最大は毎秒収入60秒分）を失います。発射は45秒に1回です。</p>' +
+    '<p class="evo-desc">ミサイル: 当たると相手は持ち金の8%（最大は毎秒収入60秒分）を失います。45秒に1回。<br>' +
+    'ジャミング: 当たると相手は' + Online.JAM_SECONDS + '秒間、収入が半分になります。60秒に1回。</p>' +
     (Online.error ? '<p class="evo-desc err">' + esc(Online.error) + '</p>' : '') +
     '<button type="button" class="ghost" id="onLeave">部屋を出る</button>';
 }
@@ -225,9 +227,11 @@ function renderOnline() {
     slot.innerHTML = onlineHTML(players);
   }
   slot.querySelectorAll('[data-attack]').forEach((b) => {
-    const cd = Online.cooldown > 0;
-    b.disabled = cd;
-    b.textContent = cd ? '再使用 ' + Math.ceil(Online.cooldown) + '秒' : 'ミサイル';
+    const kind = b.dataset.kind || 'missile';
+    const left = Online.cooldownOf(kind);
+    const name = kind === 'jam' ? 'ジャミング' : 'ミサイル';
+    b.disabled = left > 0;
+    b.textContent = left > 0 ? '再使用 ' + Math.ceil(left) + '秒' : name;
   });
 }
 
@@ -277,7 +281,7 @@ function refreshHud() {
   $('#stageName').textContent = STAGES[S.stage].name;
   $('#stageSize').textContent = STAGES[S.stage].size.replace(/（.*）/, '');
   $('#buffs').innerHTML = buffs.map((b) => {
-    const label = b.id === 'thunder' ? '神の雷 ×5' : b.id === 'warp' ? '時間 ×3' : '熱狂 ×5';
+    const label = b.id === 'thunder' ? '神の雷 ×5' : b.id === 'warp' ? '時間 ×3' : b.id === 'jam' ? 'ジャミング ×0.5' : '熱狂 ×5';
     return '<span class="buff ' + b.id + '">' + label + '　' + Math.ceil(b.time) + '秒</span>';
   }).join('');
   $('#evoCta').hidden = !canEvolve() || !!W.trans;

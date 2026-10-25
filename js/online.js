@@ -1,7 +1,8 @@
 'use strict';
-/* オンライン: 部屋を作って、協力とミサイル攻撃をする。
-   接続先は2つ。Claudeのアーティファクトの中では room / db、
-   普通のブラウザでは Firebase（js/online-config.js の設定があるとき）を使う。どちらもなければオフ。
+/* オンライン: 部屋を作って、協力と妨害（ミサイル・ジャミング）をする。
+   接続先は3つ。Claudeのアーティファクトの中では room / db、
+   Deno Deploy のサーバー（server/main.ts。js/online-config.js の PF_SERVER_URL か、.deno.dev で配信しているとき）、
+   Firebase（js/online-config.js の設定があるとき）の順で使う。どれもなければオフ。
    注意: 攻撃の結果は受け取ったほうのブラウザで計算するため、改造すれば不正はできてしまう。 */
 
 // ---------- 接続先（Claude版） ----------
@@ -77,12 +78,84 @@ function firebaseBackend() {
   };
 }
 
+// ---------- 接続先（Deno サーバー版） ----------
+// サーバーとの会話は「送って、返事を待つ」形にそろえる。部屋の中の出来事（仲間の一覧・妨害を受けた）は cb に渡す。
+function serverBackend(url) {
+  let ws = null, me = null, roomCb = null;
+  const waiters = [];   // {types, resolve, reject}
+  const toList = (players) => players.map((p) => ({ uid: p.id, name: p.name, stage: p.stage, built: p.built, inc: p.inc }));
+  const ready = () => ws && ws.readyState === WebSocket.OPEN;
+
+  function onMsg(m) {
+    const i = waiters.findIndex((w) => w.types.includes(m.type));
+    if (i >= 0) {
+      const [w] = waiters.splice(i, 1);
+      if (m.type === 'error') w.reject(new Error(m.message)); else w.resolve(m);
+      return;
+    }
+    if (!roomCb) return;
+    if (m.type === 'players') roomCb.onPlayers(toList(m.players));
+    else if (m.type === 'hit') roomCb.onMissile(m, m.from + ':' + m.ts);
+    else if (m.type === 'error') roomCb.onNotice(m.message);
+  }
+
+  function request(msg, types) {
+    return new Promise((resolve, reject) => {
+      waiters.push({ types, resolve, reject });
+      if (ready()) ws.send(JSON.stringify(msg));
+      else reject(new Error('not connected'));
+    });
+  }
+
+  function open() {
+    return new Promise((resolve, reject) => {
+      waiters.push({ types: ['welcome'], resolve: (m) => { me = m.id; resolve(me); }, reject });
+      ws = new WebSocket(url);
+      ws.onmessage = (e) => { try { onMsg(JSON.parse(e.data)); } catch (err) { /* 壊れた連絡は無視 */ } };
+      ws.onerror = () => reject(new Error('ws'));
+      ws.onclose = () => {
+        waiters.splice(0).forEach((w) => w.reject(new Error('closed')));
+        if (roomCb) roomCb.onError();
+      };
+    });
+  }
+
+  return {
+    async init() { await open(); return me; },
+    async exists(c) { return (await request({ type: 'check', code: c }, ['checked'])).exists; },
+    async create(c) { await request({ type: 'create', code: c }, ['created']); },
+    async join(c, cb) {
+      roomCb = cb;
+      try {
+        const r = await request({ type: 'join', code: c, name: cb.name }, ['joined']);
+        cb.onPlayers(toList(r.players));
+      } catch (e) {
+        roomCb = null;
+        throw e;
+      }
+      return () => {
+        roomCb = null;
+        if (ready()) ws.send(JSON.stringify({ type: 'leave' }));
+      };
+    },
+    async publish(c, info) {
+      if (ready()) ws.send(JSON.stringify({ type: 'status', name: info.name, stage: info.stage, built: info.built, inc: info.inc }));
+    },
+    async send(c, to, payload) {
+      if (ready()) ws.send(JSON.stringify({ type: 'attack', to, kind: payload.kind }));
+    },
+    async removeMissile() { /* サーバー版はミサイルを保存しないので、消す必要はない */ },
+  };
+}
+
 const Online = (() => {
   const NAME_KEY = 'planet-factory-name';
   const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';   // I, L, O, 0, 1 は見間違えやすいので除く
   const CODE_RE = new RegExp('^[' + CODE_CHARS + ']{4}$');
   const SEND_EVERY = 4;           // 自分の状況を送る間隔（秒）
-  const MISSILE_COOLDOWN = 45;    // 攻撃の再使用までの秒数
+  const COOLDOWN = { missile: 45, jam: 60 };   // 妨害の種類ごとの再使用までの秒数（サーバーも同じ値で守る）
+  const JAM_SECONDS = 30;         // ジャミングで収入が下がる秒数
+  const JAM_MULT = 0.5;           // ジャミング中の収入の倍率
   const MISSILE_MAX_PCT = 0.08;   // 1発で失うお金の上限（持ち金の割合）
   const MISSILE_MAX_SEC = 60;     // 1発で失うお金の上限（毎秒収入の秒数）
   const MISSILE_TTL = 10 * 60 * 1000;   // これより古いミサイルは当たらずに消す
@@ -92,7 +165,8 @@ const Online = (() => {
   let backend = null, uid = null, code = null, leaveFn = null, inRoom = false;
   let status = 'off';             // off: この表示では使えない / connecting / ready / in / error
   let error = '';
-  let cooldown = 0, sendT = 0;
+  const cooldowns = { missile: 0, jam: 0 };
+  let sendT = 0;
   let peerList = [];
   let name = null;
   let handlers = { onChange() {}, onIncoming() {} };
@@ -118,12 +192,21 @@ const Online = (() => {
     changed();
   }
 
-  // Claudeの中ならClaude版、そうでなく設定があればFirebase版
+  // サーバーの場所: 設定（PF_SERVER_URL）があればそれ。.deno.dev で配信しているときは同じ場所の /ws
+  function serverUrl() {
+    if (window.PF_SERVER_URL) return window.PF_SERVER_URL;
+    if (location.hostname.endsWith('.deno.dev')) return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
+    return null;
+  }
+
+  // Claudeの中ならClaude版、次にサーバー版、設定があればFirebase版
   async function pickBackend() {
     if (window.claude && typeof window.claude.use === 'function') {
       const [room, db, user] = await Promise.all(['room', 'db', 'user'].map((n) => window.claude.use(n)));
       if (room && db && user) return claudeBackend(room, db, user);
     }
+    const url = serverUrl();
+    if (url && typeof WebSocket !== 'undefined') return serverBackend(url);
     const cfg = window.PF_FIREBASE_CONFIG;
     if (cfg && cfg.databaseURL && window.firebase && firebase.database && firebase.auth) return firebaseBackend();
     return null;
@@ -192,11 +275,13 @@ const Online = (() => {
     error = '';
     try {
       leaveFn = await backend.join(c, {
+        name: myName(),
         onPlayers(list) { peerList = list; changed(); },
         onMissile(m, id) {
           backend.removeMissile(c, id).catch(() => {});   // 受け取ったら消す
           if (m.to === uid && Date.now() - m.ts < MISSILE_TTL) handlers.onIncoming(m);
         },
+        onNotice(msg) { failed(msg); },   // 部屋は保ったまま知らせる（再使用中など）
         onError: onRoomError,
       });
     } catch (e) {
@@ -235,20 +320,21 @@ const Online = (() => {
       .sort((a, b) => (a.uid === uid ? -1 : b.uid === uid ? 1 : 0));
   }
 
-  // 毎フレーム呼ぶ。自分の状況の送信・協力ボーナス・攻撃の再使用時間
+  // 毎フレーム呼ぶ。自分の状況の送信・協力ボーナス・妨害の再使用時間
   function tick(dt) {
-    if (cooldown > 0) cooldown = Math.max(0, cooldown - dt);
+    for (const k of Object.keys(cooldowns)) if (cooldowns[k] > 0) cooldowns[k] = Math.max(0, cooldowns[k] - dt);
     if (!inRoom) return;
     sendT -= dt;
     if (sendT <= 0) { sendT = SEND_EVERY; publish(); }
     setCoop(coopFor(activePlayers().length));
   }
 
-  function attack(target) {
-    if (status !== 'in' || !inRoom || cooldown > 0 || !target || target === uid) return false;
-    backend.send(code, target, { from: uid, fromName: myName(), ts: Date.now() })
-      .catch(() => failed('ミサイルを撃てませんでした。共同編集できる権限が必要です。'));
-    cooldown = MISSILE_COOLDOWN;
+  // kind: 'missile'（持ち金を奪う）または 'jam'（しばらく収入を下げる）
+  function attack(target, kind = 'missile') {
+    if (status !== 'in' || !inRoom || !(kind in COOLDOWN) || cooldowns[kind] > 0 || !target || target === uid) return false;
+    backend.send(code, target, { kind, from: uid, fromName: myName(), ts: Date.now() })
+      .catch(() => failed('撃てませんでした。共同編集できる権限が必要です。'));
+    cooldowns[kind] = COOLDOWN[kind];
     return true;
   }
 
@@ -259,13 +345,14 @@ const Online = (() => {
 
   return {
     init, createRoom, joinRoom, setName, tick, attack, missileLoss, coopFor,
+    JAM_SECONDS, JAM_MULT,
     leave: () => leaveRoom(true),
     players: activePlayers,
+    cooldownOf: (kind) => cooldowns[kind] || 0,
     get status() { return status; },
     get error() { return error; },
     get code() { return code; },
     get uid() { return uid; },
-    get cooldown() { return cooldown; },
     get name() { return myName(); },
   };
 })();

@@ -301,12 +301,16 @@ function updateBigBang(dt) {
   }
 }
 
-// ---------- オンライン（ミサイル・部屋） ----------
+// ---------- オンライン（妨害・部屋） ----------
 function onlineClick(e) {
   const atk = e.target.closest('[data-attack]');
   if (atk) {
     Sound.unlock();
-    if (Online.attack(atk.dataset.attack)) { Sound.whoosh(); toast('ミサイルを発射した！'); } else Sound.deny();
+    const kind = atk.dataset.kind || 'missile';
+    if (Online.attack(atk.dataset.attack, kind)) {
+      Sound.whoosh();
+      toast(kind === 'jam' ? 'ジャミングを発射した！' : 'ミサイルを発射した！');
+    } else Sound.deny();
     renderOnline();
     return true;
   }
@@ -316,12 +320,21 @@ function onlineClick(e) {
   return false;
 }
 
-// 他のプレイヤーからミサイルが来た。弾が当たってからお金が減る
+// 他のプレイヤーからの妨害が来た。ミサイルは弾が当たってからお金が減り、ジャミングは収入が下がる
 function onMissileHit(m) {
   incomingMissile();
   Sound.meteor();
   vibrate(60);
   FX.shake = Math.max(FX.shake, 0.6);
+  if (m.kind === 'jam') {
+    setTimeout(() => {
+      addBuff('jam', Online.JAM_MULT, Online.JAM_SECONDS);
+      Sound.warp();
+      refreshHud();
+      toast((m.fromName || '誰か') + 'からジャミング！ ' + Online.JAM_SECONDS + '秒間、収入が半分に');
+    }, 1400);
+    return;
+  }
   setTimeout(() => {
     const loss = Online.missileLoss(S.money, baseIncome());
     S.money = Math.max(0, S.money - loss);
