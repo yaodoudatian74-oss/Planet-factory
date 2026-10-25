@@ -121,6 +121,7 @@ function serverBackend(url) {
   }
 
   return {
+    hint: 'サーバー（' + url + '）につながりません。Deno Deploy のエントリーポイントが server/main.ts になっているか確かめてください。',
     async init() { await open(); return me; },
     async exists(c) { return (await request({ type: 'check', code: c }, ['checked'])).exists; },
     async create(c) { await request({ type: 'create', code: c }, ['created']); },
@@ -223,7 +224,7 @@ const Online = (() => {
       status = uid ? 'ready' : 'off';
     } catch (e) {
       status = 'error';
-      error = '接続できませんでした。設定（js/online-config.js）かネットを確認してください。';
+      error = backend.hint || '接続できませんでした。設定（js/online-config.js）かネットを確認してください。';
     }
     changed();
   }
