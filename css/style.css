@@ -125,6 +125,20 @@ button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 }
 .buff.warp { color: var(--steel); border-color: rgba(121, 220, 255, 0.5); background: rgba(121, 220, 255, 0.12); }
 .buff.frenzy { color: #ffb0f0; border-color: rgba(255, 140, 230, 0.5); background: rgba(255, 140, 230, 0.12); }
+.net {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line-2);
+  background: rgba(10, 12, 28, 0.62);
+  font-size: 12px;
+  font-weight: 700;
+  pointer-events: auto;
+}
+.net.ok { color: var(--good); border-color: rgba(134, 255, 191, 0.45); }
+.net.wait { color: var(--muted); }
+.net.bad { color: var(--bad); border-color: rgba(255, 116, 134, 0.5); }
 .buff.jam { color: #ff9aa8; border-color: rgba(255, 116, 134, 0.55); background: rgba(255, 116, 134, 0.12); }
 
 .hud-right { display: flex; gap: 8px; align-items: flex-start; flex-shrink: 0; }

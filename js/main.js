@@ -468,6 +468,12 @@ function bindUi() {
     if (b) { Sound.unlock(); usePower(b.dataset.pw); }
   });
   $('#evoCta').addEventListener('click', doEvolve);
+  $('#netChip').addEventListener('click', () => {
+    dock.classList.remove('collapsed');
+    document.body.classList.remove('dock-collapsed');
+    setTab('god');
+    computeInsets();
+  });
   $('#stageChip').addEventListener('click', () => {
     dock.classList.remove('collapsed');
     document.body.classList.remove('dock-collapsed');

@@ -176,10 +176,11 @@ Deno.serve(async (req) => {
     handleSocket(socket);
     return response;
   }
-  if (url.pathname === "/health") return new Response("ok");
+  // 別の場所に置いたゲームからも「サーバーが動いているか」を調べられるように、CORS を許可する
+  if (url.pathname === "/health") return new Response("ok", { headers: { "access-control-allow-origin": "*" } });
 
   // サーバーのコードや設定ファイルは配信しない
-  if (url.pathname.startsWith("/server/") || url.pathname.startsWith("/.git") || url.pathname === "/deno.json") {
+  if (url.pathname.startsWith("/server/") || url.pathname.startsWith("/.git") || url.pathname === "/deno.json" || url.pathname === "/deno.lock" || url.pathname === "/main.ts") {
     return new Response("not found", { status: 404 });
   }
   return serveDir(req, { fsRoot: ROOT, urlRoot: "", showDirListing: false, enableCors: false });

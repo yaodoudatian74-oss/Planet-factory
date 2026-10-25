@@ -289,6 +289,31 @@ function refreshHud() {
     return '<span class="buff ' + b.id + '">' + label + '　' + Math.ceil(b.time) + '秒</span>';
   }).join('');
   $('#evoCta').hidden = !canEvolve() || !!W.trans;
+  refreshNetChip();
+}
+
+// 画面の上の、オンラインの状態。つながっていなくても、いまどうなっているかが分かる
+function refreshNetChip() {
+  const chip = $('#netChip');
+  const st = Online.status;
+  if (st === 'off' && !Online.error) { chip.hidden = true; return; }
+  let text, cls;
+  if (st === 'in') {
+    cls = 'ok';
+    text = (Online.isPublic ? '公開ロビー' : '部屋 ' + Online.code) + '・' + Online.players().length + '人';
+  } else if (st === 'error') {
+    cls = 'bad';
+    text = 'オフライン（タップで詳細）';
+  } else if (st === 'ready') {
+    cls = 'wait';
+    text = 'オンライン待機中';
+  } else {
+    cls = 'wait';
+    text = '接続中…';
+  }
+  chip.hidden = false;
+  chip.className = 'net ' + cls;
+  if (chip.textContent !== text) chip.textContent = text;
 }
 
 function refreshMoney() {

@@ -139,8 +139,24 @@ function serverBackend(url) {
     };
   }
 
+  // つながらないとき、原因を見分けて、画面に出す文を返す
+  async function diagnose() {
+    const base = url.replace(/^ws/, 'http').replace(/\/ws$/, '');
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 6000);
+      const r = await fetch(base + '/health', { signal: ctrl.signal, cache: 'no-store' });
+      clearTimeout(timer);
+      const text = (await r.text()).trim();
+      if (r.ok && text === 'ok') return 'サーバーは動いていますが、通信（/ws）がつながりません。少し待って、ページを開き直してください。';
+      return 'このサイトでは、サーバーのプログラム（main.ts）が動いていません。ファイルを配るだけの設定になっているようです。Deno Deploy で、サーバーのアプリ（エントリーポイント main.ts）にしてください。';
+    } catch (e) {
+      return 'サーバー（' + base + '）に届きません。ネットと、サーバーの場所を確かめてください。';
+    }
+  }
+
   return {
-    hint: 'サーバー（' + url + '）につながりません。Deno Deploy のエントリーポイントが server/main.ts になっているか確かめてください。',
+    diagnose,
     async init() { await open(); return me; },
     async exists(c) { return (await request({ type: 'check', code: c }, ['checked'])).exists; },
     async create(c) { await request({ type: 'create', code: c }, ['created']); },
@@ -242,7 +258,11 @@ const Online = (() => {
       status = uid ? 'ready' : 'off';
     } catch (e) {
       status = 'error';
-      error = backend.hint || '接続できませんでした。設定（js/online-config.js）かネットを確認してください。';
+      error = '接続できませんでした。設定（js/online-config.js）かネットを確認してください。';
+      changed();
+      if (backend.diagnose) { error = await backend.diagnose(); changed(); }
+      scheduleReconnect();
+      return;
     }
     changed();
     if (status === 'ready' && autoOn) joinPublic();
@@ -300,6 +320,9 @@ const Online = (() => {
         if (status === 'ready') await joinPublic();
         if (inRoom) retry = 0; else scheduleReconnect();
       } catch (e) {
+        status = 'error';
+        if (backend.diagnose) error = await backend.diagnose();
+        changed();
         scheduleReconnect();
       }
     }, 3000);
