@@ -68,7 +68,7 @@
 
 1. Deno Deploy でプロジェクトを作り、このリポジトリの GitHub と連携する。
 2. ブランチを選び、エントリーポイント（Entrypoint）を `server/main.ts` にする。
-3. デプロイが終わったら、表示された URL（`https://…deno.dev/`）を開く。ゲームはそのまま動き、オンラインも使えます（設定は不要）。
+3. デプロイが終わったら、表示された URL（`https://…deno.dev/` または `https://…deno.net/`）を開く。ゲームはそのまま動き、オンラインも使えます（設定は不要）。
 4. ゲームを GitHub Pages など別の場所に置くときは、`js/online-config.js` の `PF_SERVER_URL` に `wss://（プロジェクト名）.deno.dev/ws` を入れる。
 5. パソコンで試すには、Deno を入れて `deno task dev` を実行し、`http://localhost:8000/` を開く（`js/online-config.js` の `PF_SERVER_URL` に `ws://localhost:8000/ws` を入れる）。
 

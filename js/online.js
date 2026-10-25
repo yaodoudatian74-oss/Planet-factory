@@ -1,7 +1,7 @@
 'use strict';
 /* オンライン: 部屋を作って、協力と妨害（ミサイル・ジャミング）をする。
    接続先は3つ。Claudeのアーティファクトの中では room / db、
-   Deno Deploy のサーバー（server/main.ts。js/online-config.js の PF_SERVER_URL か、.deno.dev で配信しているとき）、
+   Deno Deploy のサーバー（server/main.ts。js/online-config.js の PF_SERVER_URL か、.deno.dev / .deno.net で配信しているとき）、
    Firebase（js/online-config.js の設定があるとき）の順で使う。どれもなければオフ。
    注意: 攻撃の結果は受け取ったほうのブラウザで計算するため、改造すれば不正はできてしまう。 */
 
@@ -192,10 +192,10 @@ const Online = (() => {
     changed();
   }
 
-  // サーバーの場所: 設定（PF_SERVER_URL）があればそれ。.deno.dev で配信しているときは同じ場所の /ws
+  // サーバーの場所: 設定（PF_SERVER_URL）があればそれ。.deno.dev / .deno.net で配信しているときは同じ場所の /ws
   function serverUrl() {
     if (window.PF_SERVER_URL) return window.PF_SERVER_URL;
-    if (location.hostname.endsWith('.deno.dev')) return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
+    if (/\.deno\.(dev|net)$/.test(location.hostname)) return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
     return null;
   }
 
