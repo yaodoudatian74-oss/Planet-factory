@@ -1,8 +1,5 @@
 'use strict';
-/* オンラインの設定。
-   PF_SERVER_URL: Deno Deploy のサーバー（wss://…/ws）。ゲームを別の場所（GitHub Pages など）に置くときだけ入れる。
-                  .deno.dev / .deno.net で配信しているときは空のままでよい。
-   PF_FIREBASE_CONFIG: Firebase を使うときだけ入れる（無料プラン Spark）。
-   どちらも空（null）なら、一人用のゲームとして遊べます。 */
-window.PF_SERVER_URL = null;
+/* Firebase の設定（普通のブラウザでオンラインを使うときだけ）。無料プラン（Spark）で動きます。
+   空（null）のままだと、Claudeのアーティファクトの外では一人用のゲームとして遊べます。
+   設定の取り方は README.md の「Firebase の設定」を見てください。 */
 window.PF_FIREBASE_CONFIG = null;

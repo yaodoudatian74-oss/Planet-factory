@@ -1,8 +1,8 @@
 'use strict';
 /* オンライン: 部屋を作って、協力と妨害（ミサイル・ジャミング）をする。
-   接続先は3つ。Claudeのアーティファクトの中では room / db、
-   Deno Deploy のサーバー（server/main.ts。js/online-config.js の PF_SERVER_URL か、.deno.dev / .deno.net で配信しているとき）、
-   Firebase（js/online-config.js の設定があるとき）の順で使う。どれもなければオフ。
+   接続先は2つ。Claudeのアーティファクトの中では room / db、
+   普通のブラウザでは Firebase（js/online-config.js の設定があるとき）を使う。どちらもなければオフ。
+   開くと自動で、みんなが入る「公開ロビー」に入る。友だちだけの部屋（4文字のコード）も作れる。
    注意: 攻撃の結果は受け取ったほうのブラウザで計算するため、改造すれば不正はできてしまう。 */
 
 // ---------- 接続先（Claude版） ----------
@@ -78,105 +78,6 @@ function firebaseBackend() {
   };
 }
 
-// ---------- 接続先（Deno サーバー版） ----------
-// サーバーとの会話は「送って、返事を待つ」形にそろえる。部屋の中の出来事（仲間の一覧・妨害を受けた）は cb に渡す。
-function serverBackend(url) {
-  let ws = null, me = null, roomCb = null;
-  const waiters = [];   // {types, resolve, reject}
-  const toList = (players) => players.map((p) => ({ uid: p.id, name: p.name, stage: p.stage, built: p.built, inc: p.inc }));
-  const ready = () => ws && ws.readyState === WebSocket.OPEN;
-
-  function onMsg(m) {
-    const i = waiters.findIndex((w) => w.types.includes(m.type));
-    if (i >= 0) {
-      const [w] = waiters.splice(i, 1);
-      if (m.type === 'error') w.reject(new Error(m.message)); else w.resolve(m);
-      return;
-    }
-    if (!roomCb) return;
-    if (m.type === 'players') roomCb.onPlayers(toList(m.players));
-    else if (m.type === 'hit') roomCb.onMissile(m, m.from + ':' + m.ts);
-    else if (m.type === 'error') roomCb.onNotice(m.message);
-  }
-
-  function request(msg, types) {
-    return new Promise((resolve, reject) => {
-      waiters.push({ types, resolve, reject });
-      if (ready()) ws.send(JSON.stringify(msg));
-      else reject(new Error('not connected'));
-    });
-  }
-
-  function open() {
-    return new Promise((resolve, reject) => {
-      waiters.push({ types: ['welcome'], resolve: (m) => { me = m.id; resolve(me); }, reject });
-      ws = new WebSocket(url);
-      ws.onmessage = (e) => { try { onMsg(JSON.parse(e.data)); } catch (err) { /* 壊れた連絡は無視 */ } };
-      ws.onerror = () => reject(new Error('ws'));
-      ws.onclose = () => {
-        waiters.splice(0).forEach((w) => w.reject(new Error('closed')));
-        if (roomCb) roomCb.onError();
-      };
-    });
-  }
-
-  async function enterRoom(msg, cb) {
-    roomCb = cb;
-    let r;
-    try {
-      r = await request(msg, ['joined']);
-    } catch (e) {
-      roomCb = null;
-      throw e;
-    }
-    cb.onPlayers(toList(r.players));
-    return {
-      code: r.code,
-      leave: () => {
-        roomCb = null;
-        if (ready()) ws.send(JSON.stringify({ type: 'leave' }));
-      },
-    };
-  }
-
-  // つながらないとき、原因を見分けて、画面に出す文を返す
-  async function diagnose() {
-    const base = url.replace(/^ws/, 'http').replace(/\/ws$/, '');
-    try {
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 6000);
-      const r = await fetch(base + '/health', { signal: ctrl.signal, cache: 'no-store' });
-      clearTimeout(timer);
-      const text = (await r.text()).trim();
-      if (r.ok && text === 'ok') return 'サーバーは動いていますが、通信（/ws）がつながりません。少し待って、ページを開き直してください。';
-      return 'このサイトでは、サーバーのプログラム（main.ts）が動いていません。ファイルを配るだけの設定になっているようです。Deno Deploy で、サーバーのアプリ（エントリーポイント main.ts）にしてください。';
-    } catch (e) {
-      return 'サーバー（' + base + '）に届きません。ネットと、サーバーの場所を確かめてください。';
-    }
-  }
-
-  return {
-    diagnose,
-    async init() { await open(); return me; },
-    async exists(c) { return (await request({ type: 'check', code: c }, ['checked'])).exists; },
-    async create(c) { await request({ type: 'create', code: c }, ['created']); },
-    async join(c, cb) {
-      return (await enterRoom({ type: 'join', code: c, name: cb.name }, cb)).leave;
-    },
-    // 空いている公開ロビーに、サーバーが自動で振り分ける。入った部屋のコードも返す
-    async auto(cb) {
-      return enterRoom({ type: 'auto', name: cb.name }, cb);
-    },
-    async publish(c, info) {
-      if (ready()) ws.send(JSON.stringify({ type: 'status', name: info.name, stage: info.stage, built: info.built, inc: info.inc }));
-    },
-    async send(c, to, payload) {
-      if (ready()) ws.send(JSON.stringify({ type: 'attack', to, kind: payload.kind }));
-    },
-    async removeMissile() { /* サーバー版はミサイルを保存しないので、消す必要はない */ },
-  };
-}
-
 const Online = (() => {
   const NAME_KEY = 'planet-factory-name';
   const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';   // I, L, O, 0, 1 は見間違えやすいので除く
@@ -191,7 +92,7 @@ const Online = (() => {
   const COOP_PER_PLAYER = 0.1;    // 仲間1人ごとの収入ボーナス
   const COOP_MAX = 1.5;           // 協力ボーナスの上限
 
-  const PUBLIC_CODE = 'PUBS';     // サーバー以外の接続先で、みんなが入る公開ロビーのコード
+  const PUBLIC_CODE = 'PUBS';     // みんなが入る公開ロビーのコード
   let backend = null, uid = null, code = null, leaveFn = null, inRoom = false;
   let isPublic = false;           // いま公開ロビーにいるか
   let autoOn = true;              // 開いたら自動で公開ロビーに入る（自分で部屋を出たら、次に開くまで止める）
@@ -225,23 +126,12 @@ const Online = (() => {
     changed();
   }
 
-  // サーバーの場所: 設定（PF_SERVER_URL）があればそれ。.deno.dev / .deno.net で配信しているときは同じ場所の /ws
-  function serverUrl() {
-    if (window.PF_SERVER_URL) return window.PF_SERVER_URL;
-    if (typeof location !== 'undefined' && /\.deno\.(dev|net)$/.test(location.hostname)) {
-      return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
-    }
-    return null;
-  }
-
-  // Claudeの中ならClaude版、次にサーバー版、設定があればFirebase版
+  // Claudeの中ならClaude版、そうでなく設定があればFirebase版
   async function pickBackend() {
     if (window.claude && typeof window.claude.use === 'function') {
       const [room, db, user] = await Promise.all(['room', 'db', 'user'].map((n) => window.claude.use(n)));
       if (room && db && user) return claudeBackend(room, db, user);
     }
-    const url = serverUrl();
-    if (url && typeof WebSocket !== 'undefined') return serverBackend(url);
     const cfg = window.PF_FIREBASE_CONFIG;
     if (cfg && cfg.databaseURL && window.firebase && firebase.database && firebase.auth) return firebaseBackend();
     return null;
@@ -260,7 +150,6 @@ const Online = (() => {
       status = 'error';
       error = '接続できませんでした。設定（js/online-config.js）かネットを確認してください。';
       changed();
-      if (backend.diagnose) { error = await backend.diagnose(); changed(); }
       scheduleReconnect();
       return;
     }
@@ -292,16 +181,12 @@ const Online = (() => {
     }
   }
 
-  // 開いたら自動で入る公開ロビー。サーバー版は空いている部屋へ振り分け、ほかは共通の1部屋に入る
+  // 開いたら自動で入る公開ロビー。みんなが同じ1部屋（PUBS）に入る
   async function joinPublic() {
     if (status !== 'ready') return;
     try {
-      if (backend.auto) {
-        await enter(null, true);
-      } else {
-        if (!(await backend.exists(PUBLIC_CODE))) await backend.create(PUBLIC_CODE);
-        await enter(PUBLIC_CODE, true);
-      }
+      if (!(await backend.exists(PUBLIC_CODE))) await backend.create(PUBLIC_CODE);
+      await enter(PUBLIC_CODE, true);
     } catch (e) {
       failed('公開ロビーに入れませんでした。');
     }
@@ -321,7 +206,6 @@ const Online = (() => {
         if (inRoom) retry = 0; else scheduleReconnect();
       } catch (e) {
         status = 'error';
-        if (backend.diagnose) error = await backend.diagnose();
         changed();
         scheduleReconnect();
       }
@@ -366,13 +250,7 @@ const Online = (() => {
         onError: onRoomError,
     };
     try {
-      if (auto && backend.auto) {
-        const r = await backend.auto(cb);   // 入った部屋のコードは、サーバーが決める
-        c = r.code;
-        leaveFn = r.leave;
-      } else {
-        leaveFn = await backend.join(c, cb);
-      }
+      leaveFn = await backend.join(c, cb);
     } catch (e) {
       return failed(auto ? '公開ロビーに入れませんでした。' : '部屋に入れませんでした。もう一度試してください。');
     }
